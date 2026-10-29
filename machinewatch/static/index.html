@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MachineWatch</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@500;600;700&family=Barlow+Semi+Condensed:wght@500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #eef1f4; --panel: #ffffff; --ink: #18212b; --muted: #5c6773; --rule: #d6dce2;
+      --healthy: #2f7d6d; --watch: #c27a12; --critical: #c0392b; --track: #e3e8ec;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 "Barlow", system-ui, sans-serif; }
+    header { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: baseline; justify-content: space-between;
+             padding: 20px clamp(16px, 4vw, 40px); border-bottom: 1px solid var(--rule); background: var(--panel); }
+    h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: 0.01em; }
+    .model { color: var(--muted); font-family: "Barlow Semi Condensed", sans-serif; font-size: 14px; }
+    main { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 24px; padding: 24px clamp(16px, 4vw, 40px); }
+    @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+    section { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 18px 20px; min-width: 0; }
+    h2 { margin: 0 0 4px; font-size: 16px; font-weight: 600; }
+    .hint { margin: 0 0 14px; color: var(--muted); font-size: 13.5px; }
+    .counts { display: flex; gap: 18px; margin-bottom: 12px; font-family: "Barlow Semi Condensed", sans-serif; }
+    .counts b { font-size: 22px; margin-right: 4px; }
+    ol { list-style: none; margin: 0; padding: 0; }
+    li button { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 74px 1fr 64px; gap: 12px; align-items: center;
+                width: 100%; padding: 7px 8px; border-radius: 4px; cursor: pointer; }
+    li button:hover, li button[aria-pressed="true"] { background: #f2f5f7; }
+    li button:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+    .unit { font-weight: 600; }
+    .cycle { display: block; color: var(--muted); font-size: 12.5px; font-weight: 500; }
+    .bar { height: 10px; background: var(--track); border-radius: 5px; overflow: hidden; }
+    .bar span { display: block; height: 100%; border-radius: 5px; transition: width 400ms ease; }
+    .rul { text-align: right; font-family: "Barlow Semi Condensed", sans-serif; font-size: 18px; font-weight: 600; }
+    .healthy { --c: var(--healthy); } .watch { --c: var(--watch); } .critical { --c: var(--critical); }
+    .bar span { background: var(--c); } .rul { color: var(--c); }
+    svg { width: 100%; height: auto; display: block; }
+    .axis { stroke: var(--rule); } .label { fill: var(--muted); font-size: 11px; font-family: "Barlow Semi Condensed", sans-serif; }
+    .empty { color: var(--muted); padding: 24px 0; }
+    .legend { display: flex; gap: 16px; color: var(--muted); font-size: 13px; margin-top: 8px; }
+    .legend i { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 6px; }
+    @media (prefers-reduced-motion: reduce) { .bar span { transition: none; } }
+  </style>
+</head>
+<body>
+<header>
+  <h1>MachineWatch</h1>
+  <span class="model" id="model">Loading model…</span>
+</header>
+<main>
+  <section aria-labelledby="fleet-title">
+    <h2 id="fleet-title">Fleet by cycles left</h2>
+    <p class="hint">Predicted remaining useful life of each engine, most urgent first. Below 80 cycles: plan maintenance. Below 30: ground it.</p>
+    <div class="counts" id="counts"></div>
+    <ol id="fleet"><li class="empty">Waiting for sensor readings from the simulator…</li></ol>
+  </section>
+  <section aria-labelledby="engine-title">
+    <h2 id="engine-title">Select an engine</h2>
+    <p class="hint" id="engine-hint">Its predicted life and the sensors that show wear appear here.</p>
+    <div id="chart"></div>
+  </section>
+</main>
+<script>
+  const CAP = 125;
+  const fleet = new Map();
+  let selected = null;
+  const fleetEl = document.getElementById('fleet');
+
+  const el = (tag, attrs = {}, text) => {
+    const node = document.createElement(tag);
+    Object.entries(attrs).forEach(([k, v]) => node.setAttribute(k, v));
+    if (text !== undefined) node.textContent = text;
+    return node;
+  };
+
+  function renderFleet() {
+    const engines = [...fleet.values()].sort((a, b) => a.rul - b.rul);
+    const counts = { critical: 0, watch: 0, healthy: 0 };
+    engines.forEach((e) => counts[e.status]++);
+    document.getElementById('counts').replaceChildren(
+      ...Object.entries(counts).map(([status, n]) => {
+        const span = el('span', { class: status });
+        const b = el('b', { style: 'color: var(--c)' }, n);
+        span.append(b, status);
+        return span;
+      })
+    );
+    if (!engines.length) return;
+    fleetEl.replaceChildren(...engines.map((e) => {
+      const li = el('li');
+      const button = el('button', { class: e.status, 'aria-pressed': String(e.unit === selected), 'aria-label': `Engine ${e.unit}: ${e.rul} cycles left, ${e.status}` });
+      const name = el('span', { class: 'unit' }, `Engine ${e.unit}`);
+      name.append(el('span', { class: 'cycle' }, `cycle ${e.cycle}`));
+      const bar = el('div', { class: 'bar' });
+      bar.append(el('span', { style: `width:${Math.max(2, (100 * e.rul) / CAP)}%` }));
+      button.append(name, bar, el('span', { class: 'rul' }, Math.round(e.rul)));
+      button.addEventListener('click', () => selectEngine(e.unit));
+      li.append(button);
+      return li;
+    }));
+  }
+
+  function line(points, x, y, color, dashed) {
+    const d = points.map((p, i) => `${i ? 'L' : 'M'}${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`).join('');
+    return `<path d="${d}" fill="none" stroke="${color}" stroke-width="2" ${dashed ? 'stroke-dasharray="5 4"' : ''}/>`;
+  }
+
+  function renderChart(history) {
+    const W = 560, H = 300, L = 40, R = 40, T = 12, B = 30;
+    const cycles = history.map((h) => h.cycle);
+    const x = (c) => L + ((c - cycles[0]) / Math.max(1, cycles.at(-1) - cycles[0])) * (W - L - R);
+    const y = (r) => T + (1 - r / CAP) * (H - T - B);
+    // Raw s11 is noisy cycle to cycle; its 15-cycle mean shows the wear trend the model reads.
+    const s11 = history.map((h, i) => {
+      const window = history.slice(Math.max(0, i - 14), i + 1);
+      return window.reduce((sum, w) => sum + w.s11, 0) / window.length;
+    });
+    const lo = Math.min(...s11), hi = Math.max(...s11);
+    const y2 = (v) => T + (1 - (v - lo) / Math.max(1e-6, hi - lo)) * (H - T - B);
+    const zones = [[80, 'var(--watch)'], [30, 'var(--critical)']]
+      .map(([v, c]) => `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="${c}" stroke-opacity=".35" stroke-dasharray="2 4"/>
+                         <text class="label" x="${W - R + 4}" y="${y(v) + 4}">${v}</text>`).join('');
+    document.getElementById('chart').innerHTML = `
+      <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Predicted cycles left and HPC pressure over time">
+        <line class="axis" x1="${L}" x2="${W - R}" y1="${H - B}" y2="${H - B}"/>
+        <text class="label" x="${L}" y="${H - 10}">cycle ${cycles[0]}</text>
+        <text class="label" x="${W - R}" y="${H - 10}" text-anchor="end">cycle ${cycles.at(-1)}</text>
+        <text class="label" x="${L - 6}" y="${y(CAP) + 4}" text-anchor="end">${CAP}</text>
+        <text class="label" x="${L - 6}" y="${y(0) + 4}" text-anchor="end">0</text>
+        ${zones}
+        ${line(history.map((h, i) => [h.cycle, s11[i]]), x, y2, '#9aa6b2', false)}
+        ${line(history.map((h) => [h.cycle, h.rul]), x, y, 'var(--ink)')}
+      </svg>
+      <div class="legend"><span><i style="background:var(--ink)"></i>Predicted cycles left</span>
+        <span><i style="background:#9aa6b2"></i>HPC static pressure (s11), 15-cycle mean, scaled</span></div>`;
+  }
+
+  async function selectEngine(unit) {
+    selected = unit;
+    renderFleet();
+    const response = await fetch(`/api/engines/${unit}`);
+    if (!response.ok) return;
+    const history = await response.json();
+    const last = history.at(-1);
+    document.getElementById('engine-title').textContent = `Engine ${unit}`;
+    document.getElementById('engine-hint').textContent =
+      `${Math.round(last.rul)} cycles left at cycle ${last.cycle}. Pressure rises as the compressor wears; the prediction falls with it.`;
+    renderChart(history);
+  }
+
+  async function start() {
+    const model = await fetch('/api/model').then((r) => r.json()).catch(() => null);
+    document.getElementById('model').textContent = model
+      ? `Model ${model.version} · ${model.name} · test RMSE ${model.test_metrics.rmse.toFixed(1)} cycles`
+      : 'No model loaded';
+    (await fetch('/api/fleet').then((r) => r.json())).forEach((e) => fleet.set(e.unit, e));
+    renderFleet();
+    let pending = false;
+    new EventSource('/api/stream').onmessage = (message) => {
+      const event = JSON.parse(message.data);
+      if (event.reset) { fleet.clear(); selected = null; fleetEl.replaceChildren(el('li', { class: 'empty' }, 'Fleet reset. Waiting for readings…')); return; }
+      fleet.set(event.unit, event);
+      if (pending) return; // redraw at most once per animation frame
+      pending = true;
+      requestAnimationFrame(() => {
+        pending = false;
+        renderFleet();
+        if (selected === event.unit) selectEngine(selected);
+      });
+    };
+  }
+  start();
+</script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+# docker compose up --build   then open http://localhost:8000
+services:
+  api:
+    build: .
+    ports: ["8000:8000"]
+    environment:
+      MACHINEWATCH_INGEST_KEY: ${MACHINEWATCH_INGEST_KEY:-change-me}
+      MACHINEWATCH_ALLOW_RESET: "1"
+    volumes: [readings:/app/data]
+
+  simulator:
+    build: .
+    command: ["python", "-m", "machinewatch.simulator", "--engines", "12", "--rate", "8"]
+    environment:
+      MACHINEWATCH_API: http://api:8000
+      MACHINEWATCH_INGEST_KEY: ${MACHINEWATCH_INGEST_KEY:-change-me}
+    depends_on:
+      api: { condition: service_healthy }
+    restart: on-failure
+
+volumes:
+  readings:

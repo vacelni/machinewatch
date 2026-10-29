@@ -1,0 +1,30 @@
+{
+  "Ridge on current readings": {
+    "cv_by_engine": {
+      "rmse": 20.923075433939406,
+      "nasa_score": 184653.38740665204,
+      "mae": 16.279544607907127,
+      "late_share": 0.41437642382821965
+    },
+    "official_test": {
+      "rmse": 21.688831178514235,
+      "nasa_score": 1287.4561010881123,
+      "mae": 17.439917064857582,
+      "late_share": 0.58
+    }
+  },
+  "Gradient boosting on 30-cycle windows": {
+    "cv_by_engine": {
+      "rmse": 13.071178443580202,
+      "nasa_score": 65906.74531774342,
+      "mae": 9.228088967013132,
+      "late_share": 0.3707042799670399
+    },
+    "official_test": {
+      "rmse": 14.476105544869535,
+      "nasa_score": 290.1876355353024,
+      "mae": 11.168039694135427,
+      "late_share": 0.62
+    }
+  }
+}
