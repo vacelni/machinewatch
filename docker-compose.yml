@@ -1,11 +1,13 @@
-# docker compose up --build   then open http://localhost:8000
+# MACHINEWATCH_INGEST_KEY=<long random string> MACHINEWATCH_ALLOW_RESET=1 docker compose up --build
+# then open http://localhost:8000 (published on this machine only).
+# MACHINEWATCH_ALLOW_RESET=1 lets the simulator wipe the fleet and replay in a loop; leave it unset to replay once.
 services:
   api:
     build: .
-    ports: ["8000:8000"]
+    ports: ["127.0.0.1:8000:8000"]
     environment:
-      MACHINEWATCH_INGEST_KEY: ${MACHINEWATCH_INGEST_KEY:-change-me}
-      MACHINEWATCH_ALLOW_RESET: "1"
+      MACHINEWATCH_INGEST_KEY: ${MACHINEWATCH_INGEST_KEY:?set MACHINEWATCH_INGEST_KEY}
+      MACHINEWATCH_ALLOW_RESET: ${MACHINEWATCH_ALLOW_RESET:-0}
     volumes: [readings:/app/data]
 
   simulator:
@@ -13,7 +15,7 @@ services:
     command: ["python", "-m", "machinewatch.simulator", "--engines", "12", "--rate", "8"]
     environment:
       MACHINEWATCH_API: http://api:8000
-      MACHINEWATCH_INGEST_KEY: ${MACHINEWATCH_INGEST_KEY:-change-me}
+      MACHINEWATCH_INGEST_KEY: ${MACHINEWATCH_INGEST_KEY:?set MACHINEWATCH_INGEST_KEY}
     depends_on:
       api: { condition: service_healthy }
     restart: on-failure

@@ -19,6 +19,7 @@ class FakePredictor:
 def client(tmp_path, monkeypatch):
     monkeypatch.delenv("MACHINEWATCH_INGEST_KEY", raising=False)
     monkeypatch.delenv("MACHINEWATCH_ALLOW_RESET", raising=False)
+    monkeypatch.setenv("MACHINEWATCH_INSECURE_DEV", "1")
     store = api.Store(str(tmp_path / "test.db"))
     api.app.dependency_overrides[api.get_store] = lambda: store
     api.app.dependency_overrides[api.get_predictor] = FakePredictor
@@ -77,3 +78,19 @@ def test_reset_is_off_unless_enabled(client, monkeypatch):
 
 def test_unknown_engine_is_a_404(client):
     assert client.get("/api/engines/999").status_code == 404
+
+
+def test_ingest_fails_closed_without_a_key(client, monkeypatch):
+    monkeypatch.delenv("MACHINEWATCH_INSECURE_DEV")
+    assert client.post("/api/readings", json=reading()).status_code == 503
+
+
+def test_non_finite_values_are_rejected_and_nothing_is_stored(client):
+    for bad in ("NaN", "Infinity", "-Infinity"):
+        # Raw JSON, so the non-finite token reaches the server as written.
+        raw = '{"unit": 1, "cycle": 1, "settings": [0, 0, 100], "sensors": {%s}}' % ", ".join(
+            f'"{s}": {bad if s == "s7" else 1.0}' for s in SENSORS
+        )
+        response = client.post("/api/readings", content=raw, headers={"Content-Type": "application/json"})
+        assert response.status_code == 422, bad
+    assert client.get("/api/engines/1").status_code == 404

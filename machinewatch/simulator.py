@@ -58,7 +58,9 @@ def main() -> None:
             if args.once:
                 break
             time.sleep(10)
-            client.post("/api/reset")
+            if client.post("/api/reset").status_code != 200:
+                print("reset is disabled on the API (MACHINEWATCH_ALLOW_RESET): stopping after one replay")
+                break
 
 
 if __name__ == "__main__":

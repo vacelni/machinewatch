@@ -10,7 +10,8 @@
 ![Dashboard: engines sorted by predicted cycles left; engine 93's prediction falls as its compressor pressure rises](docs/dashboard.png)
 
 ```bash
-docker compose up --build      # then open http://localhost:8000
+MACHINEWATCH_INGEST_KEY=$(openssl rand -hex 24) MACHINEWATCH_ALLOW_RESET=1 docker compose up --build
+# then open http://localhost:8000
 ```
 
 The build downloads the NASA data, trains and evaluates the model, and starts the API. A simulator then replays 12 engines as if their sensors were reporting live.
@@ -41,7 +42,12 @@ simulator ──POST /api/readings──▶ FastAPI ──▶ SQLite (readings, 
 - **Features use the past only.** For each sensor: the current value, plus the mean, spread and least-squares slope over the last 30 cycles. Wear shows up as drift, for example the HPC static pressure `s11` rising, well before any single reading looks unusual. The same function serves training, evaluation and the API. A test proves that the features at cycle *t* do not change when later cycles are added, and that the API, which reads back only the last 30 cycles, gets exactly the offline features.
 - **Capped target.** Early in life an engine shows no measurable wear, so training targets are capped at 125 cycles. This is the standard piecewise-linear setup for C-MAPSS.
 - **Model registry with a promotion gate.** Every trained model is stored with its metrics and a SHA-256 checksum. A new model becomes the served one only if its test RMSE is at least as good. Loading refuses a file whose checksum does not match, which matters because `joblib` unpickles.
-- **Ingestion is idempotent.** A reading is keyed by (engine, cycle), so a retried POST is never counted twice. When `MACHINEWATCH_INGEST_KEY` is set, the API requires a key and compares it in constant time.
+- **Ingestion is idempotent and fails closed.**
+  - A reading is keyed by (engine, cycle), so a retried POST is never counted twice.
+  - Writes need the `X-API-Key` set in `MACHINEWATCH_INGEST_KEY`, compared in constant time. Without a configured key the API refuses writes; only `MACHINEWATCH_INSECURE_DEV=1` allows that, for local development.
+  - NaN and Infinity are rejected, so one bad value cannot poison an engine's feature window.
+  - Nothing is stored unless its prediction succeeded.
+  - Compose publishes the port on localhost only, and the fleet reset the simulator uses is off unless `MACHINEWATCH_ALLOW_RESET=1`.
 - **Status that a planner acts on.** Each engine gets a status from its predicted cycles left:
   - *healthy*: 80 or more;
   - *watch*: under 80, plan maintenance;
@@ -53,9 +59,9 @@ simulator ──POST /api/readings──▶ FastAPI ──▶ SQLite (readings, 
 python -m venv .venv && .venv/Scripts/activate            # or source .venv/bin/activate
 pip install -r requirements-dev.txt
 python -m machinewatch.train                              # downloads data, trains, evaluates, registers
-MACHINEWATCH_ALLOW_RESET=1 uvicorn machinewatch.api:app   # http://localhost:8000
+MACHINEWATCH_INSECURE_DEV=1 MACHINEWATCH_ALLOW_RESET=1 uvicorn machinewatch.api:app   # http://localhost:8000
 python -m machinewatch.simulator --rate 20                # in a second terminal
-pytest -q                                                 # 17 tests, no download needed
+pytest -q                                                 # 19 tests, no download needed
 ```
 
 ## API

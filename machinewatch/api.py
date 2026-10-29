@@ -5,7 +5,8 @@ engine's recent history, stores both, and streams every new prediction to the da
 
 Environment:
     MACHINEWATCH_DB           SQLite file (default data/machinewatch.db)
-    MACHINEWATCH_INGEST_KEY   if set, POST /api/readings needs header X-API-Key with this value
+    MACHINEWATCH_INGEST_KEY   required: writes need header X-API-Key with this value
+    MACHINEWATCH_INSECURE_DEV "1" accepts writes without a key (local development only)
     MACHINEWATCH_ALLOW_RESET  "1" lets the simulator wipe the fleet to start a new replay
 """
 
@@ -23,8 +24,9 @@ from pathlib import Path
 
 import pandas as pd
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel, Field, field_validator
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .data import SENSORS as ALL_SENSORS
 from .data import SETTINGS
@@ -38,10 +40,16 @@ CHART_SENSORS = ("s11", "s4")  # HPC static pressure and LPT outlet temperature:
 
 
 class Reading(BaseModel):
+    # NaN or Infinity would be stored and then poison every later feature window of that engine.
+    model_config = ConfigDict(allow_inf_nan=False)
+
     unit: int = Field(ge=1, le=100_000)
     cycle: int = Field(ge=1, le=100_000)
     settings: list[float] = Field(min_length=3, max_length=3)
     sensors: dict[str, float]
+
+    def row(self) -> dict:
+        return {"unit": self.unit, "cycle": self.cycle, **dict(zip(SETTINGS, self.settings)), **self.sensors}
 
     @field_validator("sensors")
     @classmethod
@@ -74,9 +82,10 @@ class Store:
 
     def add_reading(self, reading: Reading) -> bool:
         """False if this (unit, cycle) was already stored: a retried POST must not count twice."""
-        row = {"unit": reading.unit, "cycle": reading.cycle, **dict(zip(SETTINGS, reading.settings)), **reading.sensors}
         with self.lock, self.db:
-            cur = self.db.execute("insert or ignore into readings values (?, ?, ?)", (reading.unit, reading.cycle, json.dumps(row)))
+            cur = self.db.execute(
+                "insert or ignore into readings values (?, ?, ?)", (reading.unit, reading.cycle, json.dumps(reading.row()))
+            )
             return cur.rowcount == 1
 
     def recent(self, unit: int, upto_cycle: int, n: int) -> pd.DataFrame:
@@ -160,9 +169,21 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="MachineWatch", version="1.0.0", lifespan=lifespan)
 
 
+@app.exception_handler(RequestValidationError)
+async def validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+    # The default 422 echoes the rejected input back, and a NaN or Infinity in it cannot be written as JSON.
+    errors = [{k: v for k, v in error.items() if k not in ("input", "ctx")} for error in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": errors})
+
+
 def require_ingest_key(x_api_key: str | None = Header(default=None)) -> None:
+    """Fail closed: without a configured key, writes are refused unless local development says otherwise."""
     expected = os.environ.get("MACHINEWATCH_INGEST_KEY")
-    if expected and not (x_api_key and hmac.compare_digest(x_api_key, expected)):
+    if not expected:
+        if os.environ.get("MACHINEWATCH_INSECURE_DEV") == "1":
+            return
+        raise HTTPException(status_code=503, detail="Ingest is disabled: set MACHINEWATCH_INGEST_KEY.")
+    if not (x_api_key and hmac.compare_digest(x_api_key.encode(), expected.encode())):
         raise HTTPException(status_code=401, detail="Missing or wrong X-API-Key.")
 
 
@@ -178,11 +199,13 @@ def health() -> dict:
 
 @app.post("/api/readings", dependencies=[Depends(require_ingest_key)])
 def ingest(reading: Reading, store: Store = Depends(get_store), predictor: Predictor = Depends(get_predictor)) -> dict:
-    stored = store.add_reading(reading)
-    # The last WINDOW cycles are all the features look at, so that is all that is read back.
-    recent = store.recent(reading.unit, reading.cycle, WINDOW)
+    # Predict first, from the previous WINDOW - 1 cycles plus this one (all the features look at), and store
+    # nothing if that fails, so a reading never sits in the database without its prediction.
+    earlier = store.recent(reading.unit, reading.cycle - 1, WINDOW - 1)
+    recent = pd.concat([earlier, pd.DataFrame([reading.row()])], ignore_index=True)
     rul = predictor.predict(recent)
     status = health_status(rul)
+    stored = store.add_reading(reading)
     store.add_prediction(reading.unit, reading.cycle, rul, status, predictor.meta.version)
     event = {"unit": reading.unit, "cycle": reading.cycle, "rul": round(rul, 1), "status": status}
     if stored:
