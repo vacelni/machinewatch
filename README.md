@@ -61,7 +61,7 @@ pip install -r requirements-dev.txt
 python -m machinewatch.train                              # downloads data, trains, evaluates, registers
 MACHINEWATCH_INSECURE_DEV=1 MACHINEWATCH_ALLOW_RESET=1 uvicorn machinewatch.api:app   # http://localhost:8000
 python -m machinewatch.simulator --rate 20                # in a second terminal
-pytest -q                                                 # 19 tests, no download needed
+pytest -q                                                 # 20 tests, no download needed
 ```
 
 ## API

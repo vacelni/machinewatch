@@ -80,13 +80,24 @@ class Store:
                 """
             )
 
-    def add_reading(self, reading: Reading) -> bool:
-        """False if this (unit, cycle) was already stored: a retried POST must not count twice."""
+    def prediction(self, unit: int, cycle: int) -> tuple[float, str, str] | None:
+        with self.lock:
+            return self.db.execute(
+                "select rul, status, model_version from predictions where unit = ? and cycle = ?", (unit, cycle)
+            ).fetchone()
+
+    def add(self, reading: Reading, rul: float, status: str, version: str) -> bool:
+        """Store a reading and its prediction together, or neither. False if this (unit, cycle) was already
+        stored: a retried POST must not count twice, and a resent cycle with different values must not
+        overwrite what was recorded."""
         with self.lock, self.db:
             cur = self.db.execute(
                 "insert or ignore into readings values (?, ?, ?)", (reading.unit, reading.cycle, json.dumps(reading.row()))
             )
-            return cur.rowcount == 1
+            if cur.rowcount != 1:
+                return False
+            self.db.execute("insert into predictions values (?, ?, ?, ?, ?)", (reading.unit, reading.cycle, rul, status, version))
+            return True
 
     def recent(self, unit: int, upto_cycle: int, n: int) -> pd.DataFrame:
         with self.lock:
@@ -94,10 +105,6 @@ class Store:
                 "select data from readings where unit = ? and cycle <= ? order by cycle desc limit ?", (unit, upto_cycle, n)
             ).fetchall()
         return pd.DataFrame([json.loads(r[0]) for r in reversed(rows)])
-
-    def add_prediction(self, unit: int, cycle: int, rul: float, status: str, version: str) -> None:
-        with self.lock, self.db:
-            self.db.execute("insert or replace into predictions values (?, ?, ?, ?, ?)", (unit, cycle, rul, status, version))
 
     def fleet(self) -> list[dict]:
         with self.lock:
@@ -199,14 +206,20 @@ def health() -> dict:
 
 @app.post("/api/readings", dependencies=[Depends(require_ingest_key)])
 def ingest(reading: Reading, store: Store = Depends(get_store), predictor: Predictor = Depends(get_predictor)) -> dict:
-    # Predict first, from the previous WINDOW - 1 cycles plus this one (all the features look at), and store
-    # nothing if that fails, so a reading never sits in the database without its prediction.
+    # A cycle that is already recorded keeps its reading and prediction: answer with what was stored.
+    existing = store.prediction(reading.unit, reading.cycle)
+    if existing is not None:
+        rul, status, version = existing
+        return {"unit": reading.unit, "cycle": reading.cycle, "rul": round(rul, 1), "status": status,
+                "duplicate": True, "model_version": version}
+
+    # Predict from the previous WINDOW - 1 cycles plus this one (all the features look at), then store the
+    # reading and the prediction in one transaction, so neither can exist without the other.
     earlier = store.recent(reading.unit, reading.cycle - 1, WINDOW - 1)
     recent = pd.concat([earlier, pd.DataFrame([reading.row()])], ignore_index=True)
     rul = predictor.predict(recent)
     status = health_status(rul)
-    stored = store.add_reading(reading)
-    store.add_prediction(reading.unit, reading.cycle, rul, status, predictor.meta.version)
+    stored = store.add(reading, rul, status, predictor.meta.version)
     event = {"unit": reading.unit, "cycle": reading.cycle, "rul": round(rul, 1), "status": status}
     if stored:
         broadcaster.publish(event)

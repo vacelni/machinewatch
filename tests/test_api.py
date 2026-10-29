@@ -94,3 +94,13 @@ def test_non_finite_values_are_rejected_and_nothing_is_stored(client):
         response = client.post("/api/readings", content=raw, headers={"Content-Type": "application/json"})
         assert response.status_code == 422, bad
     assert client.get("/api/engines/1").status_code == 404
+
+
+def test_a_resent_cycle_with_different_values_does_not_overwrite_the_record(client):
+    first = client.post("/api/readings", json=reading(cycle=150)).json()
+    changed = reading(cycle=150)
+    changed["sensors"]["s11"] = 999.0
+    again = client.post("/api/readings", json=changed).json()
+    assert again["duplicate"] is True
+    assert again["rul"] == first["rul"]
+    assert client.get("/api/engines/1").json() == [{"cycle": 150, "rul": 50.0, "s11": 1.0, "s4": 1.0}]
