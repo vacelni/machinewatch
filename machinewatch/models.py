@@ -37,7 +37,7 @@ class CurrentReadingsRidge:
     def columns(self, features: pd.DataFrame) -> list[str]:
         return SENSORS
 
-    def fit(self, features: pd.DataFrame, rul) -> "CurrentReadingsRidge":
+    def fit(self, features: pd.DataFrame, rul) -> CurrentReadingsRidge:
         self.model.fit(features[self.columns(features)], rul)
         return self
 

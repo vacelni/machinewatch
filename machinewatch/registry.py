@@ -12,7 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import joblib
@@ -49,7 +49,7 @@ class Registry:
         return next((m for m in self.versions() if m.version == version), None)
 
     def register(self, model, name: str, metrics: dict) -> ModelMeta:
-        created = datetime.now(timezone.utc)
+        created = datetime.now(UTC)
         staging = self.root / f".staging-{created.timestamp()}"
         staging.mkdir(parents=True)
         joblib.dump(model, staging / "model.joblib")

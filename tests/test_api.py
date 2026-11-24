@@ -88,9 +88,8 @@ def test_ingest_fails_closed_without_a_key(client, monkeypatch):
 def test_non_finite_values_are_rejected_and_nothing_is_stored(client):
     for bad in ("NaN", "Infinity", "-Infinity"):
         # Raw JSON, so the non-finite token reaches the server as written.
-        raw = '{"unit": 1, "cycle": 1, "settings": [0, 0, 100], "sensors": {%s}}' % ", ".join(
-            f'"{s}": {bad if s == "s7" else 1.0}' for s in SENSORS
-        )
+        sensors = ", ".join(f'"{s}": {bad if s == "s7" else 1.0}' for s in SENSORS)
+        raw = f'{{"unit": 1, "cycle": 1, "settings": [0, 0, 100], "sensors": {{{sensors}}}}}'
         response = client.post("/api/readings", content=raw, headers={"Content-Type": "application/json"})
         assert response.status_code == 422, bad
     assert client.get("/api/engines/1").status_code == 404

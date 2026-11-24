@@ -1,7 +1,12 @@
 import numpy as np
 import pandas as pd
 
-from machinewatch.features import WINDOW, engine_features, fleet_features, last_cycle_features
+from machinewatch.features import (
+    WINDOW,
+    engine_features,
+    fleet_features,
+    last_cycle_features,
+)
 
 
 def test_features_at_a_cycle_ignore_the_future(engine_history):

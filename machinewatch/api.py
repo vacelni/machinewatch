@@ -266,7 +266,7 @@ async def stream(request: Request) -> StreamingResponse:
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=15)
                     yield f"data: {json.dumps(event)}\n\n"
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield ": keep-alive\n\n"
         finally:
             broadcaster.queues.discard(queue)
