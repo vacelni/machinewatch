@@ -7,3 +7,8 @@ models/
 
 # Claude Code local settings
 .claude/
+
+# environment: commit .env.example only
+.env
+.env.*
+!.env.example
